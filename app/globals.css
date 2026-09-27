@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   MineAlts design tokens
+
+   Surfaces  : near-black, layered slightly lighter as they come forward.
+   Brand     : red primary, yellow accent.
+   --------------------------------------------------------------------------- */
+
+@theme {
+  /* Surfaces */
+  --color-surface-0: #06060a;
+  --color-surface-50: #0a0a0f;
+  --color-surface-100: #0f0f16;
+  --color-surface-200: #15151f;
+  --color-surface-300: #1d1d2a;
+
+  /* Brand */
+  --color-brand-50: #fff1f1;
+  --color-brand-100: #ffdede;
+  --color-brand-200: #ffc2c2;
+  --color-brand-300: #ff9797;
+  --color-brand-400: #ff5f5f;
+  --color-brand-500: #f43030;
+  --color-brand-600: #d61a1a;
+  --color-brand-700: #ad1414;
+  --color-brand-800: #7f1212;
+  --color-brand-900: #571010;
+
+  /* Accent */
+  --color-accent-100: #fff6cf;
+  --color-accent-200: #ffea9e;
+  --color-accent-300: #ffdd66;
+  --color-accent-400: #ffd233;
+  --color-accent-500: #ffc107;
+  --color-accent-600: #d9a300;
+  --color-accent-700: #a67c00;
+
+  /* Neutrals for copy on dark */
+  --color-ink-100: #f4f4f6;
+  --color-ink-200: #d6d6dd;
+  --color-ink-300: #a1a1ad;
+  --color-ink-400: #74747f;
+  --color-ink-500: #4d4d57;
+
+  /* Fonts (wired up in app/layout.tsx) */
+  --font-sans: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-outfit), ui-sans-serif, system-ui, sans-serif;
+
+  /* Motion */
+  --animate-fade-up: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-fade-in: fade-in 0.4s ease both;
+  --animate-pulse-glow: pulse-glow 3.5s ease-in-out infinite;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+@layer base {
+  * {
+    border-color: --alpha(var(--color-surface-300) / 70%);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-surface-0);
+    color: var(--color-ink-200);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Ambient red wash + a faint grid, sitting behind all content. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    background:
+      radial-gradient(
+        ellipse 80% 55% at 50% -10%,
+        --alpha(var(--color-brand-700) / 28%),
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 60% 45% at 85% 8%,
+        --alpha(var(--color-accent-600) / 12%),
+        transparent 65%
+      );
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.35;
+    background-image:
+      linear-gradient(to right, --alpha(var(--color-surface-300) / 55%) 1px, transparent 1px),
+      linear-gradient(to bottom, --alpha(var(--color-surface-300) / 55%) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse 70% 50% at 50% 0%, black, transparent 75%);
+  }
+
+  ::selection {
+    background-color: --alpha(var(--color-brand-500) / 45%);
+    color: var(--color-ink-100);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-400);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Subtle top highlight that gives dark cards a physical edge. */
+  .card-sheen {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .card-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      --alpha(var(--color-ink-100) / 18%),
+      transparent
+    );
+    pointer-events: none;
+  }
+}
