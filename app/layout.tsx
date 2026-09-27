@@ -15,8 +15,6 @@ const outfit = Outfit({
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://minealts-git-main-cxr3.vercel.app'),
-}
-}
   title: {
     default: `${siteConfig.name} — ${siteConfig.tagline}`,
     template: `%s · ${siteConfig.name}`,
@@ -50,7 +48,7 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${outfit.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col">
