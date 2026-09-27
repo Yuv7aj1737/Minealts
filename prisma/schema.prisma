@@ -1,0 +1,286 @@
+// MineAlts — Prisma schema
+// Datasource is PostgreSQL-compatible. Point DATABASE_URL at any Postgres 12+
+// instance (local, Neon, Supabase, RDS, Railway, ...).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Authorisation level of a website account.
+///
+/// New accounts are always created as USER. SELLER and OWNER are granted
+/// exclusively by an existing OWNER (see `lib/auth/permissions.ts`).
+enum Role {
+  USER
+  SELLER
+  OWNER
+}
+
+/// Review state of a seller application.
+enum SellerApplicationStatus {
+  /// Submitted and awaiting an owner's decision. The only "active" state: a
+  /// partial unique index in the migration allows at most one per user.
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+/// Lifecycle of a marketplace listing.
+///
+/// Transitions are compare-and-set updates owned by `lib/listings/admin.server.ts`;
+/// the client can only *ask* for one. Note that `SOLD` is set by an order
+/// completing (Phase 5), not by an owner.
+enum ListingStatus {
+  /// Saved by the seller, not yet submitted for review.
+  DRAFT
+  /// Submitted and awaiting an owner's decision. Visible to the owner and the
+  /// owning seller only — never on the public marketplace.
+  PROCESSING
+  /// Live on the marketplace and buyable.
+  ACTIVE
+  /// An owner declined it. The seller may edit and resubmit.
+  REJECTED
+  /// Completed by a buyer.
+  SOLD
+  /// Withdrawn by the seller, or taken down by an owner (the "suspend"
+  /// action). Distinct from a hard delete so order history survives.
+  REMOVED
+}
+
+/// Lifecycle of a purchase.
+enum OrderStatus {
+  /// Created, not yet paid or acknowledged.
+  PENDING
+  /// Paid; the seller still owes the account.
+  AWAITING_DELIVERY
+  /// The buyer confirmed delivery. This is the point funds move.
+  DELIVERED
+  CANCELLED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  /// Discord's immutable snowflake. The natural key we identify users by.
+  discordId   String   @unique @map("discord_id")
+  /// Discord's current `username` (unique, may contain dots/underscores).
+  username    String
+  /// Discord's `global_name` — the user's chosen display name, if set.
+  displayName String?  @map("display_name")
+  /// Discord avatar hash. Combined with the CDN base at render time.
+  avatar      String?
+  role        Role     @default(USER)
+
+  /// Set by an owner to take the account out of service. Enforced by
+  /// `requireSeller`, so a suspended seller is locked out of the seller area and
+  /// their live listings disappear from the marketplace.
+  ///
+  /// Deliberately nullable rather than a `suspended` role: suspending must not
+  /// be able to collide with OWNER, and re-instating must be a single update.
+  suspendedAt DateTime? @map("suspended_at")
+  /// Why the owner suspended them. Shown to the seller and to other owners.
+  suspendedReason String? @map("suspended_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sessions Session[]
+
+  /// Applications this account has submitted.
+  sellerApplications SellerApplication[] @relation("SellerApplicationApplicant")
+
+  /// Applications this account has decided on, as an owner.
+  sellerApplicationReviews SellerApplication[] @relation("SellerApplicationReviewer")
+
+  /// Listings this account has approved, rejected or removed.
+  listingReviews Listing[] @relation("ListingReviewer")
+
+  /// Listings this account offers. Named relations because `User` also links
+  /// to `Order` twice, as buyer and as seller.
+  listings Listing[] @relation("SellerListings")
+
+  sales Order[] @relation("SellerOrders")
+  purchases Order[] @relation("BuyerOrders")
+
+  /// Balance record, created when the account is promoted to SELLER.
+  wallet Wallet?
+
+  @@index([role])
+  @@index([suspendedAt])
+  @@map("users")
+}
+
+/// A request to become a seller.
+///
+/// Identity fields (`discordId`, `discordUsername`) are server-side snapshots
+/// of the submitting account, copied from the session rather than the form, so
+/// a tampered request cannot apply on someone else's behalf. They are kept even
+/// though `user` is related, because Discord usernames change and owners need
+/// to see what the applicant looked like at the time they applied.
+///
+/// A role is never stored here. Promotion happens in the same transaction that
+/// flips `status` to ACCEPTED, in `lib/seller-applications/service.server.ts`.
+model SellerApplication {
+  id String @id @default(cuid())
+
+  userId String @map("user_id")
+  /// Snapshot of the applicant's Discord snowflake at submission time.
+  discordId String @map("discord_id")
+  /// Snapshot of the applicant's Discord username at submission time.
+  discordUsername String @map("discord_username")
+
+  /// "Why do you want to become a seller?"
+  reason String @db.VarChar(2000)
+  /// "What will you sell?"
+  whatToSell String @map("what_to_sell") @db.VarChar(2000)
+  /// "Additional information" — optional.
+  extraInfo String? @map("extra_info") @db.VarChar(2000)
+
+  status SellerApplicationStatus @default(PENDING)
+
+  /// The owner who accepted or rejected this application, if any.
+  reviewedById String? @map("reviewed_by_id")
+  reviewedAt DateTime? @map("reviewed_at")
+  reviewNote String? @map("review_note") @db.VarChar(2000)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation("SellerApplicationApplicant", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("SellerApplicationReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([reviewedById])
+  @@map("seller_applications")
+}
+
+/// A Minecraft account or server offered for sale.
+///
+/// Phase 4 adds the review fields, the public marketplace read path and the
+/// owner's approve/reject/remove actions. There is still no seller-facing
+/// create/edit form (Phase 5) — the only way a listing exists today is the
+/// development seed or an owner action.
+model Listing {
+  id String @id @default(cuid())
+
+  /// The seller's account id. Every read of a listing by a seller must be
+  /// filtered on this column, taken from the session rather than the request.
+  sellerId String @map("seller_id")
+
+  title String @db.VarChar(120)
+  /// The in-game username sold. Optional: a server slot has no username.
+  minecraftUsername String? @map("minecraft_username") @db.VarChar(64)
+  /// Seller-written detail shown on the public listing page.
+  description String? @db.Text
+
+  /// Exact money in the platform currency (INR). `Decimal(12,2)` — never a float.
+  price Decimal @db.Decimal(12, 2)
+
+  status ListingStatus @default(DRAFT)
+
+  /// The owner who last approved, rejected or removed this listing.
+  reviewedById String? @map("reviewed_by_id")
+  reviewedAt DateTime? @map("reviewed_at")
+  /// Why it was rejected or removed. Shown to the owning seller.
+  reviewNote String? @map("review_note") @db.VarChar(1000)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  seller User @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("ListingReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  orders Order[]
+
+  /// The marketplace grid filters on `status` and orders by recency, and the
+  /// owner queue groups by status.
+  @@index([status, createdAt])
+  @@index([sellerId, status])
+  @@index([reviewedById])
+  @@map("listings")
+}
+
+/// A purchase of a listing.
+///
+/// `sellerId` is denormalised alongside `listingId` on purpose: the seller
+/// dashboard filters on it directly, and reading it from the joined listing
+/// would make an accidental missing join return zero rows instead of an error.
+model Order {
+  id String @id @default(cuid())
+
+  listingId String @map("listing_id")
+  buyerId String @map("buyer_id")
+  sellerId String @map("seller_id")
+
+  /// The price paid, captured at purchase time so later price edits on the
+  /// listing cannot rewrite history.
+  amount Decimal @db.Decimal(12, 2)
+
+  status OrderStatus @default(PENDING)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer User @relation("BuyerOrders", fields: [buyerId], references: [id], onDelete: Cascade)
+  seller User @relation("SellerOrders", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  @@index([sellerId, status])
+  @@index([sellerId, createdAt])
+  @@index([buyerId])
+  @@map("orders")
+}
+
+/// A seller balance.
+///
+/// Phase 3 stores two running totals because the dashboard has to render them
+/// cheaply. Phase 7 replaces this with a real append-only ledger plus
+/// eligibility rules, and derives these figures from it. The column names are
+/// kept so the dashboard does not change shape when that happens.
+model Wallet {
+  id String @id @default(cuid())
+
+  userId String @unique @map("user_id")
+
+  /// Cleared for withdrawal.
+  availableBalance Decimal @default(0) @map("available_balance") @db.Decimal(12, 2)
+
+  /// Held in escrow pending delivery confirmation or the cooldown window.
+  pendingBalance Decimal @default(0) @map("pending_balance") @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+/// Opaque server-side session.
+///
+/// The cookie holds a 32-byte random token; only its SHA-256 digest is stored
+/// here, so a database leak cannot be replayed as a valid login.
+model Session {
+  id        String   @id @default(cuid())
+  /// SHA-256 (hex) of the raw session token. Never store the raw value.
+  tokenHash String   @unique @map("token_hash")
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  /// Best-effort request context for security auditing. Not authorisation data.
+  userAgent String?  @map("user_agent")
+  ipAddress String?  @map("ip_address")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
