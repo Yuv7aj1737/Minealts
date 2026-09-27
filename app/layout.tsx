@@ -15,7 +15,7 @@ const outfit = Outfit({
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://minealts-git-main-cxr3.vercel.app'),
-  // baaki code waisa hi rahega
+  
 }
 }
   title: {
