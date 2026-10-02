@@ -1,12 +1,12 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
-import type { AuthUser } from "@/types/auth";
+import type { AuthSession, AuthUser } from "@/types/auth";
 
-export async function getCurrentUser(): Promise<AuthUser | null> {
+export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
 
-  const supabase = createServerClient(
+  return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -20,14 +20,17 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
               cookieStore.set(name, value, options)
             );
           } catch {
-            // The `setAll` method was called from a Server Component.
+            // Called from Server Component
           }
         },
       },
     }
   );
+}
 
+export async function getCurrentUser(): Promise<AuthUser | null> {
   try {
+    const supabase = await createSupabaseServerClient();
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return null;
 
@@ -39,5 +42,37 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
     };
   } catch {
     return null;
+  }
+}
+
+export async function getSession(): Promise<AuthSession | null> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session || !session.user) return null;
+
+    const user: AuthUser = {
+      id: session.user.id,
+      email: session.user.email || "",
+      name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || "User",
+      avatarUrl: session.user.user_metadata?.avatar_url || "",
+    };
+
+    return {
+      user,
+      accessToken: session.access_token,
+      expiresAt: session.expires_at || Math.floor(Date.now() / 1000) + 3600,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function destroySession(): Promise<void> {
+  try {
+    const supabase = await createSupabaseServerClient();
+    await supabase.auth.signOut();
+  } catch {
+    // Ignore signout errors
   }
 }
