@@ -1,7 +1,6 @@
 "use client";
 
 import { createBrowserClient } from "@supabase/ssr";
-import { DiscordIcon } from "@/components/auth/DiscordIcon";
 
 export function SupabaseDiscordButton({ nextPath }: { nextPath: string }) {
   const handleLogin = async () => {
@@ -23,7 +22,6 @@ export function SupabaseDiscordButton({ nextPath }: { nextPath: string }) {
       onClick={handleLogin}
       className="inline-flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-[#5865F2] text-sm font-semibold text-white transition-colors hover:bg-[#4752C4]"
     >
-      <DiscordIcon className="size-5" />
       Continue with Discord
     </button>
   );
