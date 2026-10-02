@@ -34,22 +34,22 @@ const tokenSchema = z.object({
   scope: z.string().default(""),
 });
 
+// Bulletproof fallback to 100% match Discord Developer Portal
+const FALLBACK_REDIRECT_URI = "https://minealts.vercel.app/api/auth/discord/callback";
+
 /**
  * Builds the URL the browser is redirected to in order to start login.
- *
- * `state` protects against CSRF/login-injection; the PKCE challenge means a
- * stolen authorization code cannot be redeemed without the verifier that
- * only ever existed in the user's httpOnly cookie.
  */
 export function buildDiscordAuthorizeUrl(input: {
   state: string;
   pkce: PkcePair;
 }): URL {
-  const { DISCORD_CLIENT_ID, DISCORD_REDIRECT_URI } = env();
+  const { DISCORD_CLIENT_ID } = env();
+  const redirectUri = process.env.DISCORD_REDIRECT_URI || FALLBACK_REDIRECT_URI;
 
   const url = new URL(DISCORD_AUTHORIZE_URL);
   url.searchParams.set("client_id", DISCORD_CLIENT_ID);
-  url.searchParams.set("redirect_uri", DISCORD_REDIRECT_URI);
+  url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", DISCORD_SCOPES.join(" "));
   url.searchParams.set("state", input.state);
@@ -62,23 +62,20 @@ export function buildDiscordAuthorizeUrl(input: {
 
 /**
  * Exchanges an authorization code for an access token.
- *
- * Runs server-to-server, so DISCORD_CLIENT_SECRET never reaches the browser.
- * The access/refresh tokens are intentionally not persisted — the website
- * session is the only credential we keep.
  */
 export async function exchangeCodeForToken(input: {
   code: string;
   codeVerifier: string;
 }): Promise<DiscordTokenResponse> {
-  const { DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET, DISCORD_REDIRECT_URI } = env();
+  const { DISCORD_CLIENT_ID, DISCORD_CLIENT_SECRET } = env();
+  const redirectUri = process.env.DISCORD_REDIRECT_URI || FALLBACK_REDIRECT_URI;
 
   const body = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
     client_secret: DISCORD_CLIENT_SECRET,
     grant_type: "authorization_code",
     code: input.code,
-    redirect_uri: DISCORD_REDIRECT_URI,
+    redirect_uri: redirectUri,
     code_verifier: input.codeVerifier,
   });
 
@@ -98,10 +95,6 @@ export async function exchangeCodeForToken(input: {
     const detail = await readOAuthError(response);
     console.error("[discord] token exchange failed", response.status, detail);
 
-    // `invalid_client` is Discord's single error for a bad client_id, a bad
-    // client_secret, or a redirect_uri that is not registered for this
-    // application. It is by far the most common setup mistake, so it gets a
-    // distinct, actionable message instead of a generic failure.
     if (detail?.error === "invalid_client") {
       throw new AppError(
         "DISCORD_CREDENTIALS_INVALID",
@@ -109,7 +102,6 @@ export async function exchangeCodeForToken(input: {
       );
     }
 
-    // A code that is unknown, expired or already redeemed.
     if (detail?.error === "invalid_grant") {
       throw new AppError(
         "INVALID_CODE",
@@ -131,7 +123,7 @@ export async function exchangeCodeForToken(input: {
   return parsed.data as DiscordTokenResponse;
 }
 
-/** Fetches the authenticated Discord account. Uses the `identify` scope only. */
+/** Fetches the authenticated Discord account. */
 export async function fetchDiscordUser(accessToken: string): Promise<DiscordUser> {
   let response: Response;
   try {
