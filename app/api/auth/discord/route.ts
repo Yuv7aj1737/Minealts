@@ -2,9 +2,9 @@ import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
 
-import { createPkcePair } from "@/lib/auth/crypto";
+import { createPkcePair, signPayload } from "@/lib/auth/crypto";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
-import { isDiscordAuthConfigured } from "@/lib/env";
+import { env, isDiscordAuthConfigured } from "@/lib/env";
 import { safeInternalPathOr } from "@/lib/auth/redirects";
 import { routes } from "@/lib/constants";
 
@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = request.nextUrl;
   const nextPath = safeInternalPathOr(searchParams.get("next"), routes.dashboard);
+  const { DISCORD_CLIENT_SECRET } = env();
 
   // 1. Generate cryptographic state and PKCE verifier/challenge for security
   const state = crypto.randomUUID();
@@ -39,10 +40,10 @@ export async function GET(request: NextRequest) {
 
   const response = NextResponse.redirect(authorizeUrl);
 
-  // 3. Set secure cookies so callback can verify them
-  response.cookies.set(STATE_COOKIE, state, COOKIE_OPTIONS);
-  response.cookies.set(VERIFIER_COOKIE, pkce.codeVerifier, COOKIE_OPTIONS);
-  response.cookies.set(NEXT_COOKIE, nextPath, COOKIE_OPTIONS);
+  // 3. Set signed cookies so callback verifyPayload can read them successfully
+  response.cookies.set(STATE_COOKIE, signPayload(state, DISCORD_CLIENT_SECRET), COOKIE_OPTIONS);
+  response.cookies.set(VERIFIER_COOKIE, signPayload(pkce.codeVerifier, DISCORD_CLIENT_SECRET), COOKIE_OPTIONS);
+  response.cookies.set(NEXT_COOKIE, signPayload(nextPath, DISCORD_CLIENT_SECRET), COOKIE_OPTIONS);
 
   return response;
 }
