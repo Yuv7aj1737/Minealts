@@ -1,28 +1,25 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
-import { DiscordButton } from "@/components/auth/DiscordButton";
-import { DiscordIcon } from "@/components/auth/DiscordIcon";
 import { LogoMark } from "@/components/ui/Logo";
-import { authErrorMessage } from "@/lib/auth/errors";
 import { getCurrentUser } from "@/lib/auth/session";
 import { safeInternalPathOr } from "@/lib/auth/redirects";
-import { isDiscordAuthConfigured } from "@/lib/env";
 import { DEFAULT_POST_LOGIN_REDIRECT, routes } from "@/lib/constants";
+import { SupabaseDiscordButton } from "@/components/auth/SupabaseDiscordButton";
 
 export const metadata: Metadata = {
   title: "Sign in",
-  description: "Sign in to MineAlts with your Discord account.",
+  description: "Sign in to MineAlts with your Discord account via Supabase.",
 };
 
 const HIGHLIGHTS = [
   {
     title: "No new password",
-    description: "Discord authenticates you. We only receive your public profile.",
+    description: "Discord authenticates you securely through Supabase.",
   },
   {
     title: "Minimum access",
-    description: "We request only the identify scope — no email, no server list.",
+    description: "We request only standard profile scope — secure and fast.",
   },
   {
     title: "Revocable sessions",
@@ -32,7 +29,9 @@ const HIGHLIGHTS = [
 
 export default async function LoginPage({
   searchParams,
-}: PageProps<"/login">) {
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const params = await searchParams;
 
   // Already signed in: skip the form.
@@ -46,10 +45,10 @@ export default async function LoginPage({
     redirect(nextPath);
   }
 
-  const error = authErrorMessage(
-    typeof params?.error === "string" ? params.error : null,
+  const errorParam = typeof params?.error === "string" ? params.error : null;
+  const hasSupabaseConfig = Boolean(
+    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   );
-  const configured = isDiscordAuthConfigured();
 
   return (
     <div className="relative overflow-hidden">
@@ -69,7 +68,7 @@ export default async function LoginPage({
           </h1>
 
           <p className="mt-4 max-w-md text-pretty leading-relaxed text-ink-300">
-            MineAlts uses Discord OAuth2. You approve the connection on Discord&apos;s own
+            MineAlts uses Supabase & Discord OAuth2. You approve the connection on Discord&apos;s own
             site — your credentials never touch this website.
           </p>
 
@@ -110,58 +109,45 @@ export default async function LoginPage({
               </p>
             </div>
 
-            {error ? (
+            {errorParam ? (
               <div
                 role="alert"
                 className="mt-6 rounded-xl border border-brand-500/40 bg-brand-500/10 px-4 py-3 text-sm text-brand-200"
               >
-                {error}
+                Authentication error occurred. Please try again.
               </div>
             ) : null}
 
-            {!configured ? (
+            {!hasSupabaseConfig ? (
               <div
                 role="status"
                 className="mt-6 rounded-xl border border-accent-400/40 bg-accent-400/10 px-4 py-4 text-sm text-accent-100"
               >
-                <p className="font-semibold">Discord sign-in is not configured.</p>
+                <p className="font-semibold">Supabase is not configured.</p>
                 <p className="mt-1.5 text-accent-100/80">
-                  Set <code className="font-mono text-xs">DISCORD_CLIENT_ID</code>,{" "}
-                  <code className="font-mono text-xs">DISCORD_CLIENT_SECRET</code> and{" "}
-                  <code className="font-mono text-xs">AUTH_SECRET</code> in{" "}
-                  <code className="font-mono text-xs">.env.local</code>, then restart the
-                  dev server.
+                  Set <code className="font-mono text-xs">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+                  <code className="font-mono text-xs">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in{" "}
+                  <code className="font-mono text-xs">.env.local</code>.
                 </p>
               </div>
             ) : null}
 
             <div className="mt-8">
-              {configured ? (
-                <DiscordButton next={nextPath} size="lg" className="w-full" />
+              {hasSupabaseConfig ? (
+                <SupabaseDiscordButton nextPath={nextPath} />
               ) : (
                 <span
-                  aria-disabled="true"
+                  aria-hidden="true"
                   className="inline-flex h-13 w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-surface-200 text-sm font-semibold text-ink-500"
                 >
-                  <DiscordIcon className="size-5" />
                   Continue with Discord
                 </span>
               )}
             </div>
 
             <p className="mt-6 text-center text-xs leading-relaxed text-ink-500">
-              By continuing you agree to let MineAlts store your Discord user ID,
-              username and avatar so it can show your profile.
+              By continuing you agree to let MineAlts sign you in securely via Supabase and Discord.
             </p>
-
-            <div className="mt-8 border-t border-surface-300/70 pt-6">
-              <p className="text-xs leading-relaxed text-ink-500">
-                Redirect URI registered on Discord:{" "}
-                <code className="font-mono text-ink-400">
-                  {process.env.DISCORD_REDIRECT_URI || `${routes.auth.discordCallback} (default)`}
-                </code>
-              </p>
-            </div>
           </div>
         </div>
       </div>
