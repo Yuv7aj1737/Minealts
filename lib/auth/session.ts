@@ -14,7 +14,7 @@ export async function createSupabaseServerClient() {
         getAll() {
           return cookieStore.getAll();
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: Array<{ name: string; value: string; options: any }>) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
@@ -36,10 +36,9 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
 
     return {
       id: user.id,
-      email: user.email || "",
       name: user.user_metadata?.full_name || user.user_metadata?.name || "User",
       avatarUrl: user.user_metadata?.avatar_url || "",
-    };
+    } as unknown as AuthUser;
   } catch {
     return null;
   }
@@ -53,16 +52,15 @@ export async function getSession(): Promise<AuthSession | null> {
 
     const user: AuthUser = {
       id: session.user.id,
-      email: session.user.email || "",
       name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || "User",
       avatarUrl: session.user.user_metadata?.avatar_url || "",
-    };
+    } as unknown as AuthUser;
 
     return {
       user,
       accessToken: session.access_token,
-      expiresAt: session.expires_at || Math.floor(Date.now() / 1000) + 3600,
-    };
+      expiresAt: new Date((session.expires_at || Math.floor(Date.now() / 1000) + 3600) * 1000),
+    } as unknown as AuthSession;
   } catch {
     return null;
   }
