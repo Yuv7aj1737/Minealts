@@ -2,7 +2,7 @@ import "server-only";
 
 import { type NextRequest, NextResponse } from "next/server";
 
-import { generatePkcePair, signPayload } from "@/lib/auth/crypto";
+import { createPkcePair, signPayload } from "@/lib/auth/crypto";
 import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
 import { isDiscordAuthConfigured } from "@/lib/env";
 import { safeInternalPathOr } from "@/lib/auth/redirects";
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
   // 1. Generate cryptographic state and PKCE verifier/challenge for security
   const state = crypto.randomUUID();
-  const pkce = generatePkcePair();
+  const pkce = createPkcePair();
 
   // 2. Build the official Discord authorization URL
   const authorizeUrl = buildDiscordAuthorizeUrl({ state, pkce });
