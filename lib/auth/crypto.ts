@@ -1,110 +1,51 @@
 import "server-only";
 
-import {
-  createHash,
-  createHmac,
-  randomBytes,
-  timingSafeEqual,
-} from "node:crypto";
+import { type NextRequest, NextResponse } from "next/server";
 
-import { env } from "@/lib/env";
+import { createPkcePair, signPayload } from "@/lib/auth/crypto";
+import { buildDiscordAuthorizeUrl } from "@/lib/auth/discord";
+import { isDiscordAuthConfigured } from "@/lib/env";
+import { safeInternalPathOr } from "@/lib/auth/redirects";
+import { routes } from "@/lib/constants";
 
-/** URL-safe base64 without padding. */
-export function base64UrlEncode(input: Buffer): string {
-  return input.toString("base64url");
-}
+const STATE_COOKIE = "minealts_oauth_state";
+const VERIFIER_COOKIE = "minealts_oauth_verifier";
+const NEXT_COOKIE = "minealts_oauth_next";
 
-/** Cryptographically strong random token, URL-safe. */
-export function generateToken(byteLength = 32): string {
-  return base64UrlEncode(randomBytes(byteLength));
-}
+// 10 minutes in seconds for cookie TTL
+const COOKIE_TTL = 60 * 10;
 
-/** One-way digest used to store session tokens at rest. */
-export function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  path: "/api/auth/discord",
+  maxAge: COOKIE_TTL,
+} as const;
 
-/** Constant-time string comparison. Returns false on length mismatch. */
-export function safeEqual(a: string, b: string): boolean {
-  const bufferA = Buffer.from(a, "utf8");
-  const bufferB = Buffer.from(b, "utf8");
-  if (bufferA.length !== bufferB.length) return false;
-  return timingSafeEqual(bufferA, bufferB);
-}
-
-/** Signed-cookie payload: `<base64url(json)>.<base64url(hmac-sha256)>`. */
-export type SignedPayload = { value: string; expiresAt: number };
-
-/**
- * Signs a short-lived value with AUTH_SECRET so it can live in a cookie
- * without server-side storage while still being tamper-evident.
- */
-export function signPayload(value: string, ttlSeconds: number): string {
-  const { AUTH_SECRET } = env();
-  const payload: SignedPayload = {
-    value,
-    expiresAt: Date.now() + ttlSeconds * 1000,
-  };
-  const encoded = base64UrlEncode(Buffer.from(JSON.stringify(payload), "utf8"));
-  const signature = base64UrlEncode(
-    createHmac("sha256", AUTH_SECRET).update(encoded).digest(),
-  );
-  return `${encoded}.${signature}`;
-}
-
-/**
- * Verifies and un-signs a payload produced by {@link signPayload}.
- * Returns null when the signature does not match, the payload is malformed,
- * or it has expired.
- */
-export function verifyPayload(token: string | undefined): SignedPayload | null {
-  if (!token) return null;
-
-  const separator = token.lastIndexOf(".");
-  if (separator <= 0) return null;
-
-  const encoded = token.slice(0, separator);
-  const signature = token.slice(separator + 1);
-
-  let expected: Buffer;
-  try {
-    expected = createHmac("sha256", env().AUTH_SECRET)
-      .update(encoded)
-      .digest();
-  } catch {
-    return null;
+export async function GET(request: NextRequest) {
+  if (!isDiscordAuthConfigured()) {
+    const url = new URL(routes.login, request.nextUrl.origin);
+    url.searchParams.set("error", "CONFIG_ERROR");
+    return NextResponse.redirect(url);
   }
 
-  const provided = Buffer.from(signature, "base64url");
-  if (provided.length !== expected.length) return null;
-  if (!timingSafeEqual(provided, expected)) return null;
+  const { searchParams } = request.nextUrl;
+  const nextPath = safeInternalPathOr(searchParams.get("next"), routes.dashboard);
 
-  try {
-    const payload = JSON.parse(
-      Buffer.from(encoded, "base64url").toString("utf8"),
-    ) as SignedPayload;
+  // 1. Generate cryptographic state and PKCE verifier/challenge for security
+  const state = crypto.randomUUID();
+  const pkce = createPkcePair();
 
-    if (typeof payload.value !== "string") return null;
-    if (typeof payload.expiresAt !== "number") return null;
-    if (payload.expiresAt <= Date.now()) return null;
+  // 2. Build the official Discord authorization URL
+  const authorizeUrl = buildDiscordAuthorizeUrl({ state, pkce });
 
-    return payload;
-  } catch {
-    return null;
-  }
-}
+  const response = NextResponse.redirect(authorizeUrl);
 
-/** PKCE pair for the OAuth2 authorization-code flow (RFC 7636, S256). */
-export type PkcePair = {
-  codeVerifier: string;
-  codeChallenge: string;
-  codeChallengeMethod: "S256";
-};
+  // 3. Set signed cookies with proper TTL (expiry in seconds)
+  response.cookies.set(STATE_COOKIE, signPayload(state, COOKIE_TTL), COOKIE_OPTIONS);
+  response.cookies.set(VERIFIER_COOKIE, signPayload(pkce.codeVerifier, COOKIE_TTL), COOKIE_OPTIONS);
+  response.cookies.set(NEXT_COOKIE, signPayload(nextPath, COOKIE_TTL), COOKIE_OPTIONS);
 
-export function createPkcePair(): PkcePair {
-  const codeVerifier = generateToken(32);
-  const codeChallenge = base64UrlEncode(
-    createHash("sha256").update(codeVerifier).digest(),
-  );
-  return { codeVerifier, codeChallenge, codeChallengeMethod: "S256" };
+  return response;
 }
